@@ -1,0 +1,10 @@
+server:
+  port: 8833
+spring:
+  application:
+    name: elastic_search
+#es http方式
+elasticsearch:
+  address: localhost:9200
+#  username: admin
+#  password: admin

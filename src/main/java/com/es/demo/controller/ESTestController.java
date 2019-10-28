@@ -16,20 +16,26 @@ import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.support.replication.ReplicationResponse;
+import org.elasticsearch.action.update.UpdateRequest;
+import org.elasticsearch.action.update.UpdateResponse;
 import org.elasticsearch.client.RequestOptions;
 import org.elasticsearch.client.RestHighLevelClient;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentType;
-import org.elasticsearch.index.query.QueryBuilders;
-import org.elasticsearch.index.query.RangeQueryBuilder;
+import org.elasticsearch.index.query.*;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.SearchHits;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
+import org.elasticsearch.search.sort.FieldSortBuilder;
+import org.elasticsearch.search.sort.SortBuilders;
+import org.elasticsearch.search.sort.SortMode;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
 import java.io.IOException;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -96,8 +102,15 @@ public class ESTestController {
     public ResponseBean testESFind(@RequestParam String name) {
         SearchRequest searchRequest = new SearchRequest("test_es");
         SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
-        RangeQueryBuilder rangeQueryBuilder = QueryBuilders.rangeQuery("birthday").from("1997-01-01").to("2000-10-10").format("yyyy-MM-dd");
-        sourceBuilder.query(rangeQueryBuilder);
+        //如果用name直接查询，其实是匹配name分词过后的索引查到的记录(倒排索引)；如果用name.keyword查询则是不分词的查询，正常查询到的记录
+        RangeQueryBuilder rangeQueryBuilder = QueryBuilders.rangeQuery("birthday").from("1991-01-01").to("2010-10-10").format("yyyy-MM-dd");//范围查询
+//        TermQueryBuilder termQueryBuilder = QueryBuilders.termQuery("name.keyword", name);//精准查询
+        PrefixQueryBuilder prefixQueryBuilder = QueryBuilders.prefixQuery("name.keyword", "张");//前缀查询
+//        WildcardQueryBuilder wildcardQueryBuilder = QueryBuilders.wildcardQuery("name.keyword", "*三");//通配符查询
+//        FuzzyQueryBuilder fuzzyQueryBuilder = QueryBuilders.fuzzyQuery("name", "三");//模糊查询
+        FieldSortBuilder fieldSortBuilder = SortBuilders.fieldSort("age");//按照年龄排序
+        fieldSortBuilder.sortMode(SortMode.MIN);//从小到大排序
+        sourceBuilder.query(prefixQueryBuilder).query(rangeQueryBuilder).sort(fieldSortBuilder);//多条件查询
         sourceBuilder.timeout(new TimeValue(60, TimeUnit.SECONDS));
         searchRequest.source(sourceBuilder);
         try {
@@ -113,6 +126,27 @@ public class ESTestController {
         } catch (IOException e) {
             e.printStackTrace();
             return new ResponseBean(10001, "查询失败", null);
+        }
+    }
+
+    @ApiOperation(value = "es测试更新接口", notes = "es测试更新接口")
+    @RequestMapping(value = "/update", method = RequestMethod.GET)
+    public ResponseBean testESUpdate(@RequestParam String id) {
+        UpdateRequest updateRequest = new UpdateRequest("test_es", "user", id);
+        Map<String, Object> map = new HashMap<>();
+        map.put("birthday", "1974-02-02");
+        map.put("money", 700000);
+        updateRequest.doc(map);
+        try {
+            UpdateResponse updateResponse = highLevelClient.update(updateRequest, RequestOptions.DEFAULT);
+            if (updateResponse.getResult() == DocWriteResponse.Result.UPDATED) {
+                return new ResponseBean(200, "更新成功", null);
+            } else {
+                return new ResponseBean(10002, "删除失败", null);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+            return new ResponseBean(1003, "删除异常", null);
         }
     }
 

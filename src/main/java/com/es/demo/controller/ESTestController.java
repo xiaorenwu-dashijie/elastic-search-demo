@@ -9,6 +9,8 @@ import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.extern.slf4j.Slf4j;
 import org.elasticsearch.action.DocWriteResponse;
+import org.elasticsearch.action.delete.DeleteRequest;
+import org.elasticsearch.action.delete.DeleteResponse;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.index.IndexResponse;
 import org.elasticsearch.action.search.SearchRequest;
@@ -19,6 +21,7 @@ import org.elasticsearch.client.RestHighLevelClient;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.index.query.QueryBuilders;
+import org.elasticsearch.index.query.RangeQueryBuilder;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.SearchHits;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
@@ -26,6 +29,7 @@ import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
 import java.io.IOException;
+import java.util.Date;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -43,16 +47,10 @@ public class ESTestController {
     private RestHighLevelClient highLevelClient;
 
     @ApiOperation(value = "es测试插入接口", notes = "es测试插入接口")
-    @RequestMapping(value = "/insert", method = RequestMethod.GET)
-    public ResponseBean findIndustryClassList(@RequestParam String name, @RequestParam Integer age, @RequestParam String address, @RequestParam String birthday) {
+    @RequestMapping(value = "/insert", method = RequestMethod.POST)
+    public ResponseBean findIndustryClassList(@RequestBody User user) {
         String indexName = "test_es";
         IndexRequest indexRequest = new IndexRequest(indexName, "user");
-
-        User user = new User();
-        user.setName(name);
-        user.setAge(age);
-        user.setAddress(address);
-        user.setBirthday(birthday);
 
         String userJson = JSONObject.toJSONString(user);
 
@@ -98,7 +96,8 @@ public class ESTestController {
     public ResponseBean testESFind(@RequestParam String name) {
         SearchRequest searchRequest = new SearchRequest("test_es");
         SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
-        sourceBuilder.query(QueryBuilders.termQuery("name.keyword", name));
+        RangeQueryBuilder rangeQueryBuilder = QueryBuilders.rangeQuery("birthday").from("1997-01-01").to("2000-10-10").format("yyyy-MM-dd");
+        sourceBuilder.query(rangeQueryBuilder);
         sourceBuilder.timeout(new TimeValue(60, TimeUnit.SECONDS));
         searchRequest.source(sourceBuilder);
         try {
@@ -117,5 +116,22 @@ public class ESTestController {
         }
     }
 
-
+    @ApiOperation(value = "es测试删除接口", notes = "es测试删除接口")
+    @RequestMapping(value = "/delete", method = RequestMethod.GET)
+    public ResponseBean testESDelete(@RequestParam String id) {
+        DeleteRequest deleteRequest = new DeleteRequest("test_es");
+        deleteRequest.type("user");
+        deleteRequest.id(id);
+        try {
+            DeleteResponse deleteResponse = highLevelClient.delete(deleteRequest, RequestOptions.DEFAULT);
+            if (deleteResponse.getResult() == DocWriteResponse.Result.NOT_FOUND) {
+                return new ResponseBean(1001, "删除失败", null);
+            } else {
+                return new ResponseBean(200, "删除成功", null);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+            return new ResponseBean(1003, "删除异常", null);
+        }
+    }
 }

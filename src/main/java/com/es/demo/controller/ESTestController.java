@@ -7,6 +7,7 @@ import com.es.demo.vo.ResponseBean;
 import com.es.demo.vo.User;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
+import javassist.expr.Instanceof;
 import lombok.extern.slf4j.Slf4j;
 import org.elasticsearch.action.DocWriteResponse;
 import org.elasticsearch.action.delete.DeleteRequest;
@@ -25,6 +26,15 @@ import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.index.query.*;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.SearchHits;
+import org.elasticsearch.search.aggregations.Aggregation;
+import org.elasticsearch.search.aggregations.AggregationBuilders;
+import org.elasticsearch.search.aggregations.Aggregations;
+import org.elasticsearch.search.aggregations.bucket.terms.ParsedLongTerms;
+import org.elasticsearch.search.aggregations.bucket.terms.StringTerms;
+import org.elasticsearch.search.aggregations.bucket.terms.Terms;
+import org.elasticsearch.search.aggregations.bucket.terms.TermsAggregationBuilder;
+import org.elasticsearch.search.aggregations.metrics.sum.ParsedSum;
+import org.elasticsearch.search.aggregations.metrics.sum.SumAggregationBuilder;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.sort.FieldSortBuilder;
 import org.elasticsearch.search.sort.SortBuilders;
@@ -35,6 +45,7 @@ import javax.annotation.Resource;
 import java.io.IOException;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -97,9 +108,9 @@ public class ESTestController {
     }
 
 
-    @ApiOperation(value = "es测试查询接口", notes = "es测试查询接口")
+    @ApiOperation(value = "es测试普通查询接口", notes = "es测试普通查询接口")
     @RequestMapping(value = "/query", method = RequestMethod.GET)
-    public ResponseBean testESFind(@RequestParam String name) {
+    public ResponseBean testESFind() {
         SearchRequest searchRequest = new SearchRequest("test_es");
         SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
         //如果用name直接查询，其实是匹配name分词过后的索引查到的记录(倒排索引)；如果用name.keyword查询则是不分词的查询，正常查询到的记录
@@ -110,7 +121,11 @@ public class ESTestController {
 //        FuzzyQueryBuilder fuzzyQueryBuilder = QueryBuilders.fuzzyQuery("name", "三");//模糊查询
         FieldSortBuilder fieldSortBuilder = SortBuilders.fieldSort("age");//按照年龄排序
         fieldSortBuilder.sortMode(SortMode.MIN);//从小到大排序
-        sourceBuilder.query(prefixQueryBuilder).query(rangeQueryBuilder).sort(fieldSortBuilder);//多条件查询
+
+        BoolQueryBuilder boolQueryBuilder = QueryBuilders.boolQuery();
+        boolQueryBuilder.must(rangeQueryBuilder).should(prefixQueryBuilder);//and or  查询
+
+        sourceBuilder.query(boolQueryBuilder).sort(fieldSortBuilder);//多条件查询
         sourceBuilder.timeout(new TimeValue(60, TimeUnit.SECONDS));
         searchRequest.source(sourceBuilder);
         try {
@@ -129,13 +144,43 @@ public class ESTestController {
         }
     }
 
+    @ApiOperation(value = "es测试聚合查询接口", notes = "es测试聚合查询接口")
+    @RequestMapping(value = "/query/agg", method = RequestMethod.GET)
+    public ResponseBean testESFindAgg() {
+        SearchRequest searchRequest = new SearchRequest("test_es");
+        SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
+
+        TermsAggregationBuilder termsAggregationBuilder = AggregationBuilders.terms("by_age").field("age");
+        sourceBuilder.aggregation(termsAggregationBuilder);
+
+        sourceBuilder.timeout(new TimeValue(60, TimeUnit.SECONDS));
+        searchRequest.source(sourceBuilder);
+
+        try {
+            SearchResponse searchResponse = highLevelClient.search(searchRequest, RequestOptions.DEFAULT);
+            Aggregations aggregations = searchResponse.getAggregations();
+            Map<String, Aggregation> stringAggregationMap = aggregations.asMap();
+            ParsedLongTerms parsedLongTerms = (ParsedLongTerms) stringAggregationMap.get("by_age");
+            List<? extends Terms.Bucket> buckets = parsedLongTerms.getBuckets();
+            for (Terms.Bucket bucket : buckets) {
+                long docCount = bucket.getDocCount();//个数
+                Number keyAsNumber = bucket.getKeyAsNumber();//年龄
+                System.err.println(keyAsNumber + "岁的有" + docCount + "个");
+            }
+            return new ResponseBean(200, "查询成功", buckets);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
     @ApiOperation(value = "es测试更新接口", notes = "es测试更新接口")
     @RequestMapping(value = "/update", method = RequestMethod.GET)
-    public ResponseBean testESUpdate(@RequestParam String id) {
+    public ResponseBean testESUpdate(@RequestParam String id, @RequestParam Double money) {
         UpdateRequest updateRequest = new UpdateRequest("test_es", "user", id);
         Map<String, Object> map = new HashMap<>();
-        map.put("birthday", "1974-02-02");
-        map.put("money", 700000);
+//        map.put("birthday", "1974-02-02");
+        map.put("money", money);
         updateRequest.doc(map);
         try {
             UpdateResponse updateResponse = highLevelClient.update(updateRequest, RequestOptions.DEFAULT);

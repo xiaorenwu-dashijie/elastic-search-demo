@@ -61,7 +61,7 @@ import java.util.concurrent.TimeUnit;
 public class ESTestController {
 
     @Resource
-    private RestHighLevelClient highLevelClient;
+    private RestHighLevelClient restHighLevelClient;
     @Resource
     ESUtil esUtil;
 
@@ -73,26 +73,23 @@ public class ESTestController {
                     .startObject()
                     .field("properties")
                     .startObject()
-                    .field("name")
-                    .startObject()
-                    .field("index", "false")
-                    .field("type", "text")
-                    .endObject()
-                    .field("age")
-                    .startObject()
-                    .field("index", "false")
-                    .field("type", "integer")
-                    .endObject()
+                    .field("name").startObject().field("index", "true").field("type", "text").field("analyzer", "ik_max_word").endObject()
+                    .field("age").startObject().field("index", "true").field("type", "integer").endObject()
                     .endObject()
                     .endObject();
             CreateIndexRequest createIndexRequest = new CreateIndexRequest(indexName);
             createIndexRequest.mapping(builder);
-            CreateIndexResponse createIndexResponse = highLevelClient.indices().create(createIndexRequest, RequestOptions.DEFAULT);
-            System.out.println(createIndexResponse.index());
+            CreateIndexResponse createIndexResponse = restHighLevelClient.indices().create(createIndexRequest, RequestOptions.DEFAULT);
+            boolean acknowledged = createIndexResponse.isAcknowledged();
+            if (acknowledged) {
+                return new ResponseBean(200, "创建成功", null);
+            } else {
+                return new ResponseBean(1002, "创建失败", null);
+            }
         } catch (IOException e) {
             e.printStackTrace();
         }
-        return new ResponseBean(200, "创建成功", null);
+        return null;
     }
 
     @ApiOperation(value = "es测试是否存在索引接口", notes = "es测试是否存在索引接口")
@@ -115,13 +112,12 @@ public class ESTestController {
 
     @ApiOperation(value = "es测试插入接口", notes = "es测试插入接口")
     @RequestMapping(value = "/insert/data", method = RequestMethod.POST)
-    public ResponseBean findIndustryClassList(@RequestBody User user) {
-        String indexName = "test_es";
+    public ResponseBean findIndustryClassList(@RequestBody User user, @RequestParam String indexName) {
         IndexRequest indexRequest = new IndexRequest(indexName);
         String userJson = JSONObject.toJSONString(user);
         indexRequest.source(userJson, XContentType.JSON);
         try {
-            IndexResponse indexResponse = highLevelClient.index(indexRequest, RequestOptions.DEFAULT);
+            IndexResponse indexResponse = restHighLevelClient.index(indexRequest, RequestOptions.DEFAULT);
             if (indexResponse != null) {
                 String id = indexResponse.getId();
                 String index = indexResponse.getIndex();
@@ -175,7 +171,7 @@ public class ESTestController {
         sourceBuilder.timeout(new TimeValue(60, TimeUnit.SECONDS));
         searchRequest.source(sourceBuilder);
         try {
-            SearchResponse response = highLevelClient.search(searchRequest, RequestOptions.DEFAULT);
+            SearchResponse response = restHighLevelClient.search(searchRequest, RequestOptions.DEFAULT);
             SearchHits hits = response.getHits();
             JSONArray jsonArray = new JSONArray();
             for (SearchHit hit : hits) {
@@ -203,7 +199,7 @@ public class ESTestController {
         searchRequest.source(sourceBuilder);
 
         try {
-            SearchResponse searchResponse = highLevelClient.search(searchRequest, RequestOptions.DEFAULT);
+            SearchResponse searchResponse = restHighLevelClient.search(searchRequest, RequestOptions.DEFAULT);
             Aggregations aggregations = searchResponse.getAggregations();
             Map<String, Aggregation> stringAggregationMap = aggregations.asMap();
             ParsedLongTerms parsedLongTerms = (ParsedLongTerms) stringAggregationMap.get("by_age");
@@ -230,7 +226,7 @@ public class ESTestController {
         map.put("money", money);
         updateRequest.doc(map);
         try {
-            UpdateResponse updateResponse = highLevelClient.update(updateRequest, RequestOptions.DEFAULT);
+            UpdateResponse updateResponse = restHighLevelClient.update(updateRequest, RequestOptions.DEFAULT);
             if (updateResponse.getResult() == DocWriteResponse.Result.UPDATED) {
                 return new ResponseBean(200, "更新成功", null);
             } else {
@@ -248,7 +244,7 @@ public class ESTestController {
         DeleteRequest deleteRequest = new DeleteRequest("test_es");
         deleteRequest.id(id);
         try {
-            DeleteResponse deleteResponse = highLevelClient.delete(deleteRequest, RequestOptions.DEFAULT);
+            DeleteResponse deleteResponse = restHighLevelClient.delete(deleteRequest, RequestOptions.DEFAULT);
             if (deleteResponse.getResult() == DocWriteResponse.Result.NOT_FOUND) {
                 return new ResponseBean(1001, "删除失败", null);
             } else {

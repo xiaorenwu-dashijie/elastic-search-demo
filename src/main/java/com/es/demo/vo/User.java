@@ -1,13 +1,7 @@
 package com.es.demo.vo;
 
 
-import com.fasterxml.jackson.annotation.JsonFormat;
 import lombok.Data;
-import org.apache.lucene.document.FieldType;
-import org.jboss.logging.Field;
-
-import java.text.DateFormat;
-import java.util.Date;
 
 /**
  * @Description:

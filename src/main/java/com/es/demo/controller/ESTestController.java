@@ -73,8 +73,11 @@ public class ESTestController {
                     .startObject()
                     .field("properties")
                     .startObject()
-                    .field("name").startObject().field("index", "true").field("type", "text").field("analyzer", "ik_max_word").endObject()
+                    .field("name").startObject().field("index", "true").field("type", "keyword").endObject()
                     .field("age").startObject().field("index", "true").field("type", "integer").endObject()
+                    .field("money").startObject().field("index", "true").field("type", "double").endObject()
+                    .field("address").startObject().field("index", "true").field("type", "text").field("analyzer", "ik_max_word").endObject()
+                    .field("birthday").startObject().field("index", "true").field("type", "date").field("format", "strict_date_optional_time||epoch_millis").endObject()
                     .endObject()
                     .endObject();
             CreateIndexRequest createIndexRequest = new CreateIndexRequest(indexName);
@@ -240,8 +243,8 @@ public class ESTestController {
 
     @ApiOperation(value = "es测试删除接口", notes = "es测试删除接口")
     @RequestMapping(value = "/delete/data", method = RequestMethod.GET)
-    public ResponseBean testESDelete(@RequestParam String id) {
-        DeleteRequest deleteRequest = new DeleteRequest("test_es");
+    public ResponseBean testESDelete(@RequestParam String id, @RequestParam String indexName) {
+        DeleteRequest deleteRequest = new DeleteRequest(indexName);
         deleteRequest.id(id);
         try {
             DeleteResponse deleteResponse = restHighLevelClient.delete(deleteRequest, RequestOptions.DEFAULT);

@@ -67,7 +67,7 @@ public class ESConfig {
 
     @Bean(name = "highLevelClient")
     public RestHighLevelClient highLevelClient(@Autowired RestClientBuilder restClientBuilder) {
-        restClientBuilder.setMaxRetryTimeoutMillis(60000);
+//        restClientBuilder.setMaxRetryTimeoutMillis(60000);
         return new RestHighLevelClient(restClientBuilder);
     }
 

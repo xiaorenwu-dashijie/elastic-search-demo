@@ -3,11 +3,11 @@ package com.es.demo.controller;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
+import com.es.demo.utils.ESUtil;
 import com.es.demo.vo.ResponseBean;
 import com.es.demo.vo.User;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
-import javassist.expr.Instanceof;
 import lombok.extern.slf4j.Slf4j;
 import org.elasticsearch.action.DocWriteResponse;
 import org.elasticsearch.action.delete.DeleteRequest;
@@ -21,7 +21,11 @@ import org.elasticsearch.action.update.UpdateRequest;
 import org.elasticsearch.action.update.UpdateResponse;
 import org.elasticsearch.client.RequestOptions;
 import org.elasticsearch.client.RestHighLevelClient;
+import org.elasticsearch.client.indices.CreateIndexRequest;
+import org.elasticsearch.client.indices.CreateIndexResponse;
 import org.elasticsearch.common.unit.TimeValue;
+import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.index.query.*;
 import org.elasticsearch.search.SearchHit;
@@ -30,11 +34,8 @@ import org.elasticsearch.search.aggregations.Aggregation;
 import org.elasticsearch.search.aggregations.AggregationBuilders;
 import org.elasticsearch.search.aggregations.Aggregations;
 import org.elasticsearch.search.aggregations.bucket.terms.ParsedLongTerms;
-import org.elasticsearch.search.aggregations.bucket.terms.StringTerms;
 import org.elasticsearch.search.aggregations.bucket.terms.Terms;
 import org.elasticsearch.search.aggregations.bucket.terms.TermsAggregationBuilder;
-import org.elasticsearch.search.aggregations.metrics.sum.ParsedSum;
-import org.elasticsearch.search.aggregations.metrics.sum.SumAggregationBuilder;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.sort.FieldSortBuilder;
 import org.elasticsearch.search.sort.SortBuilders;
@@ -43,7 +44,6 @@ import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
 import java.io.IOException;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -62,28 +62,74 @@ public class ESTestController {
 
     @Resource
     private RestHighLevelClient highLevelClient;
+    @Resource
+    ESUtil esUtil;
+
+    @ApiOperation(value = "es测试创建索引接口", notes = "es测试创建索引接口")
+    @RequestMapping(value = "/create/index", method = RequestMethod.POST)
+    public ResponseBean createIndex(@RequestParam String indexName) {
+        try {
+            XContentBuilder builder = XContentFactory.jsonBuilder()
+                    .startObject()
+                    .field("properties")
+                    .startObject()
+                    .field("name")
+                    .startObject()
+                    .field("index", "false")
+                    .field("type", "text")
+                    .endObject()
+                    .field("age")
+                    .startObject()
+                    .field("index", "false")
+                    .field("type", "integer")
+                    .endObject()
+                    .endObject()
+                    .endObject();
+            CreateIndexRequest createIndexRequest = new CreateIndexRequest(indexName);
+            createIndexRequest.mapping(builder);
+            CreateIndexResponse createIndexResponse = highLevelClient.indices().create(createIndexRequest, RequestOptions.DEFAULT);
+            System.out.println(createIndexResponse.index());
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return new ResponseBean(200, "创建成功", null);
+    }
+
+    @ApiOperation(value = "es测试是否存在索引接口", notes = "es测试是否存在索引接口")
+    @RequestMapping(value = "/index/exists", method = RequestMethod.POST)
+    public ResponseBean indexExists(@RequestParam String indexName) {
+        boolean isExists = esUtil.isIndexExists(indexName);
+        return new ResponseBean(200, "查询成功", isExists);
+    }
+
+    @ApiOperation(value = "es测试删除索引接口", notes = "es测试删除索引接口")
+    @RequestMapping(value = "/delete/index", method = RequestMethod.POST)
+    public ResponseBean deleteIndex(@RequestParam String indexName) {
+        boolean isDelete = esUtil.deleteIndex(indexName);
+        if (isDelete) {
+            return new ResponseBean(200, "删除成功", null);
+        } else {
+            return new ResponseBean(10002, "删除失败", null);
+        }
+    }
 
     @ApiOperation(value = "es测试插入接口", notes = "es测试插入接口")
-    @RequestMapping(value = "/insert", method = RequestMethod.POST)
+    @RequestMapping(value = "/insert/data", method = RequestMethod.POST)
     public ResponseBean findIndustryClassList(@RequestBody User user) {
         String indexName = "test_es";
-        IndexRequest indexRequest = new IndexRequest(indexName, "user");
-
+        IndexRequest indexRequest = new IndexRequest(indexName);
         String userJson = JSONObject.toJSONString(user);
-
         indexRequest.source(userJson, XContentType.JSON);
-
         try {
             IndexResponse indexResponse = highLevelClient.index(indexRequest, RequestOptions.DEFAULT);
             if (indexResponse != null) {
                 String id = indexResponse.getId();
                 String index = indexResponse.getIndex();
-                String type = indexResponse.getType();
                 long version = indexResponse.getVersion();
-                log.info("index:{},type:{},id:{}", index, type, id);
+                log.info("index:{},id:{}", index, id);
                 if (indexResponse.getResult() == DocWriteResponse.Result.CREATED) {
-                    System.out.println("新增文档成功!" + index + "-" + type + "-" + id + "-" + version);
-                    return new ResponseBean(200, "插入成功", null);
+                    System.out.println("新增文档成功!" + index + "-" + id + "-" + version);
+                    return new ResponseBean(200, "插入成功", id);
                 } else if (indexResponse.getResult() == DocWriteResponse.Result.UPDATED) {
                     System.out.println("修改文档成功!");
                     return new ResponseBean(10001, "插入失败", null);
@@ -109,7 +155,7 @@ public class ESTestController {
 
 
     @ApiOperation(value = "es测试普通查询接口", notes = "es测试普通查询接口")
-    @RequestMapping(value = "/query", method = RequestMethod.GET)
+    @RequestMapping(value = "/query/data", method = RequestMethod.GET)
     public ResponseBean testESFind() {
         SearchRequest searchRequest = new SearchRequest("test_es");
         SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
@@ -162,12 +208,14 @@ public class ESTestController {
             Map<String, Aggregation> stringAggregationMap = aggregations.asMap();
             ParsedLongTerms parsedLongTerms = (ParsedLongTerms) stringAggregationMap.get("by_age");
             List<? extends Terms.Bucket> buckets = parsedLongTerms.getBuckets();
+            Map<Integer, Long> map = new HashMap<>();
             for (Terms.Bucket bucket : buckets) {
                 long docCount = bucket.getDocCount();//个数
                 Number keyAsNumber = bucket.getKeyAsNumber();//年龄
                 System.err.println(keyAsNumber + "岁的有" + docCount + "个");
+                map.put(keyAsNumber.intValue(), docCount);
             }
-            return new ResponseBean(200, "查询成功", buckets);
+            return new ResponseBean(200, "查询成功", map);
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -175,11 +223,10 @@ public class ESTestController {
     }
 
     @ApiOperation(value = "es测试更新接口", notes = "es测试更新接口")
-    @RequestMapping(value = "/update", method = RequestMethod.GET)
+    @RequestMapping(value = "/update/data", method = RequestMethod.GET)
     public ResponseBean testESUpdate(@RequestParam String id, @RequestParam Double money) {
-        UpdateRequest updateRequest = new UpdateRequest("test_es", "user", id);
+        UpdateRequest updateRequest = new UpdateRequest("test_es", id);
         Map<String, Object> map = new HashMap<>();
-//        map.put("birthday", "1974-02-02");
         map.put("money", money);
         updateRequest.doc(map);
         try {
@@ -196,10 +243,9 @@ public class ESTestController {
     }
 
     @ApiOperation(value = "es测试删除接口", notes = "es测试删除接口")
-    @RequestMapping(value = "/delete", method = RequestMethod.GET)
+    @RequestMapping(value = "/delete/data", method = RequestMethod.GET)
     public ResponseBean testESDelete(@RequestParam String id) {
         DeleteRequest deleteRequest = new DeleteRequest("test_es");
-        deleteRequest.type("user");
         deleteRequest.id(id);
         try {
             DeleteResponse deleteResponse = highLevelClient.delete(deleteRequest, RequestOptions.DEFAULT);

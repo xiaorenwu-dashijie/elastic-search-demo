@@ -9,13 +9,18 @@ import com.es.demo.vo.User;
 import io.swagger.annotations.Api;
 import io.swagger.annotations.ApiOperation;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.ArrayUtils;
 import org.elasticsearch.action.DocWriteResponse;
+import org.elasticsearch.action.bulk.BulkRequest;
+import org.elasticsearch.action.bulk.BulkResponse;
 import org.elasticsearch.action.delete.DeleteRequest;
 import org.elasticsearch.action.delete.DeleteResponse;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.index.IndexResponse;
+import org.elasticsearch.action.search.ClearScrollRequest;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
+import org.elasticsearch.action.search.SearchScrollRequest;
 import org.elasticsearch.action.support.replication.ReplicationResponse;
 import org.elasticsearch.action.update.UpdateRequest;
 import org.elasticsearch.action.update.UpdateResponse;
@@ -28,6 +33,8 @@ import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentFactory;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.index.query.*;
+import org.elasticsearch.rest.RestStatus;
+import org.elasticsearch.search.Scroll;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.SearchHits;
 import org.elasticsearch.search.aggregations.Aggregation;
@@ -44,6 +51,7 @@ import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -66,7 +74,7 @@ public class ESTestController {
     ESUtil esUtil;
 
     @ApiOperation(value = "es测试创建索引接口", notes = "es测试创建索引接口")
-    @RequestMapping(value = "/create/index", method = RequestMethod.POST)
+    @RequestMapping(value = "/index/create", method = RequestMethod.POST)
     public ResponseBean createIndex(@RequestParam String indexName) {
         try {
             XContentBuilder builder = XContentFactory.jsonBuilder()
@@ -103,7 +111,7 @@ public class ESTestController {
     }
 
     @ApiOperation(value = "es测试删除索引接口", notes = "es测试删除索引接口")
-    @RequestMapping(value = "/delete/index", method = RequestMethod.POST)
+    @RequestMapping(value = "/index/delete", method = RequestMethod.POST)
     public ResponseBean deleteIndex(@RequestParam String indexName) {
         boolean isDelete = esUtil.deleteIndex(indexName);
         if (isDelete) {
@@ -152,10 +160,44 @@ public class ESTestController {
         return null;
     }
 
+    @ApiOperation(value = "es测试批量插入接口", notes = "es测试批量插入接口")
+    @RequestMapping(value = "/insert/data/bulk", method = RequestMethod.POST)
+    public ResponseBean insertBulkData(@RequestParam String indexName) {
+        BulkRequest bulkRequest = new BulkRequest();
+        User user = new User();
+        for (int i = 1; i <= 11000; i++) {
+            user.setName("吴六" + i);
+            user.setAddress("北京" + i);
+            user.setAge(i);
+            user.setMoney(new Double(i));
+            user.setBirthday("2019-11-05");
+
+            String userJson = JSONObject.toJSONString(user);
+            IndexRequest indexRequest = new IndexRequest(indexName);
+            indexRequest.source(userJson, XContentType.JSON);
+            bulkRequest.add(indexRequest);
+        }
+        try {
+            BulkResponse bulkResponse = restHighLevelClient.bulk(bulkRequest, RequestOptions.DEFAULT);
+            RestStatus restStatus = bulkResponse.status();
+            int status = restStatus.getStatus();
+            if (status == 200) {
+                return new ResponseBean(status, "插入成功", null);
+            } else {
+                return new ResponseBean(status, "插入失败", null);
+
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
 
     @ApiOperation(value = "es测试普通查询接口", notes = "es测试普通查询接口")
     @RequestMapping(value = "/query/data", method = RequestMethod.GET)
     public ResponseBean testESFind() {
+        // 普通查询，默认只查询出10条，需要设置index.max_result_window参数
         SearchRequest searchRequest = new SearchRequest("test_es");
         SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
         //如果用name直接查询，其实是匹配name分词过后的索引查到的记录(倒排索引)；如果用name.keyword查询则是不分词的查询，正常查询到的记录
@@ -173,24 +215,11 @@ public class ESTestController {
         sourceBuilder.query(boolQueryBuilder).sort(fieldSortBuilder);//多条件查询
         sourceBuilder.timeout(new TimeValue(60, TimeUnit.SECONDS));
         searchRequest.source(sourceBuilder);
-        try {
-            SearchResponse response = restHighLevelClient.search(searchRequest, RequestOptions.DEFAULT);
-            SearchHits hits = response.getHits();
-            JSONArray jsonArray = new JSONArray();
-            for (SearchHit hit : hits) {
-                String sourceAsString = hit.getSourceAsString();
-                JSONObject jsonObject = JSON.parseObject(sourceAsString);
-                jsonArray.add(jsonObject);
-            }
-            return new ResponseBean(200, "查询成功", jsonArray);
-        } catch (IOException e) {
-            e.printStackTrace();
-            return new ResponseBean(10001, "查询失败", null);
-        }
+        return getResponseBean(searchRequest);
     }
 
     @ApiOperation(value = "es测试聚合查询接口", notes = "es测试聚合查询接口")
-    @RequestMapping(value = "/query/agg", method = RequestMethod.GET)
+    @RequestMapping(value = "/query/data/agg", method = RequestMethod.GET)
     public ResponseBean testESFindAgg() {
         SearchRequest searchRequest = new SearchRequest("test_es");
         SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
@@ -215,6 +244,72 @@ public class ESTestController {
                 map.put(keyAsNumber.intValue(), docCount);
             }
             return new ResponseBean(200, "查询成功", map);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+    @ApiOperation(value = "es测试深度分页查询接口", notes = "es测试深度分页查询接口")
+    @RequestMapping(value = "/query/data/bypage/deep", method = RequestMethod.GET)
+    public ResponseBean testQueryDataByPage(@RequestParam("from") Integer from, @RequestParam("size") Integer size) {
+        SearchRequest searchRequest = new SearchRequest("qjc_es");
+        SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
+        PrefixQueryBuilder prefixQueryBuilder = QueryBuilders.prefixQuery("address", "北京");//前缀查询
+        sourceBuilder.query(prefixQueryBuilder).from(from).size(size);
+        sourceBuilder.timeout(new TimeValue(60, TimeUnit.SECONDS));
+        searchRequest.source(sourceBuilder);
+        return getResponseBean(searchRequest);
+    }
+
+    private ResponseBean getResponseBean(SearchRequest searchRequest) {
+        try {
+            SearchResponse response = restHighLevelClient.search(searchRequest, RequestOptions.DEFAULT);
+            SearchHits hits = response.getHits();
+            JSONArray jsonArray = new JSONArray();
+            for (SearchHit hit : hits) {
+                String sourceAsString = hit.getSourceAsString();
+                JSONObject jsonObject = JSON.parseObject(sourceAsString);
+                jsonArray.add(jsonObject);
+            }
+            return new ResponseBean(200, "查询成功", jsonArray);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return new ResponseBean(10001, "查询失败", null);
+        }
+    }
+
+    @ApiOperation(value = "es测试快照查询所有数据接口", notes = "es测试快照查询所有数据接口")
+    @RequestMapping(value = "/query/alldata/snapshot", method = RequestMethod.GET)
+    public ResponseBean testQueryAllData() {
+        try {
+            SearchRequest searchRequest = new SearchRequest("qjc_es");
+            SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
+            PrefixQueryBuilder prefixQueryBuilder = QueryBuilders.prefixQuery("address", "北京");//前缀查询
+            sourceBuilder.query(prefixQueryBuilder);
+            sourceBuilder.timeout(new TimeValue(60, TimeUnit.SECONDS));
+            searchRequest.source(sourceBuilder);
+            Scroll scroll = new Scroll(new TimeValue(60, TimeUnit.SECONDS));
+            searchRequest.scroll(scroll);
+            SearchResponse searchResponse = restHighLevelClient.search(searchRequest, RequestOptions.DEFAULT);
+            String scrollId = searchResponse.getScrollId();
+            SearchHit[] hits = searchResponse.getHits().getHits();
+            List<SearchHit> resultSearchHit = new ArrayList<>();
+            while (ArrayUtils.isNotEmpty(hits)) {
+                for (SearchHit hit : hits) {
+                    resultSearchHit.add(hit);
+                }
+                SearchScrollRequest searchScrollRequest = new SearchScrollRequest(scrollId);
+                searchScrollRequest.scroll(scroll);
+                SearchResponse searchScrollResponse = restHighLevelClient.scroll(searchScrollRequest, RequestOptions.DEFAULT);
+                scrollId = searchScrollResponse.getScrollId();
+                hits = searchScrollResponse.getHits().getHits();
+            }
+            //及时清除es快照，释放资源
+            ClearScrollRequest clearScrollRequest = new ClearScrollRequest();
+            clearScrollRequest.addScrollId(scrollId);
+            restHighLevelClient.clearScroll(clearScrollRequest, RequestOptions.DEFAULT);
+            return new ResponseBean(200, "查询成功", resultSearchHit);
         } catch (IOException e) {
             e.printStackTrace();
         }
